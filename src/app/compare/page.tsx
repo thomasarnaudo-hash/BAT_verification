@@ -20,8 +20,8 @@ function CompareContent() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [comparing, setComparing] = useState(false);
+  const [error, setError] = useState("");
 
-  // Fetch references list
   useEffect(() => {
     fetch("/api/references")
       .then((r) => r.json())
@@ -29,19 +29,19 @@ function CompareContent() {
       .catch(console.error);
   }, []);
 
-  // Load reference PDF when SKU is selected
   const loadReference = useCallback(async (sku: string) => {
     const ref = references.find((r) => r.sku === sku);
     if (!ref) return;
     setProgress("Chargement de la référence...");
     setLoading(true);
     try {
-      const pages = await renderPdf(ref.blobUrl, 2, (p, t) =>
+      const pages = await renderPdf(ref.blobUrl, 1.5, (p, t) =>
         setProgress(`Rendu référence : page ${p}/${t}`)
       );
       setRefPages(pages);
     } catch (err) {
       console.error("Failed to load reference:", err);
+      setError("Impossible de charger le PDF de référence.");
     } finally {
       setLoading(false);
       setProgress("");
@@ -54,60 +54,58 @@ function CompareContent() {
     }
   }, [selectedSku, references, loadReference]);
 
-  // Handle new file upload
   const handleNewFile = async (file: File) => {
     setNewFile(file);
     setLoading(true);
     setProgress("Chargement du nouveau BAT...");
     try {
       const buffer = await file.arrayBuffer();
-      const pages = await renderPdf(buffer, 2, (p, t) =>
+      const pages = await renderPdf(buffer, 1.5, (p, t) =>
         setProgress(`Rendu nouveau BAT : page ${p}/${t}`)
       );
       setNewPages(pages);
     } catch (err) {
       console.error("Failed to render new PDF:", err);
+      setError("Impossible de lire ce PDF.");
     } finally {
       setLoading(false);
       setProgress("");
     }
   };
 
-  // Launch comparison
   const handleCompare = async () => {
     if (!newFile || refPages.length === 0) return;
     setComparing(true);
+    setError("");
 
-    // Upload temp file
-    const formData = new FormData();
-    formData.append("file", newFile);
-    const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-    const uploaded = await uploadRes.json();
+    try {
+      // Upload temp file to get a URL
+      const formData = new FormData();
+      formData.append("file", newFile);
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      if (!uploadRes.ok) {
+        const data = await uploadRes.json().catch(() => ({}));
+        setError(data.error || "Erreur lors de l'upload.");
+        setComparing(false);
+        return;
+      }
+      const uploaded = await uploadRes.json();
 
-    // Store comparison data in sessionStorage for the results page
-    const comparisonData = {
-      sku: selectedSku,
-      refPages: refPages.map((p) => ({
-        pageNumber: p.pageNumber,
-        text: p.text,
-        width: p.width,
-        height: p.height,
-        imageDataArray: Array.from(p.imageData.data),
-      })),
-      newPages: newPages.map((p) => ({
-        pageNumber: p.pageNumber,
-        text: p.text,
-        width: p.width,
-        height: p.height,
-        imageDataArray: Array.from(p.imageData.data),
-      })),
-      tempBlobUrl: uploaded.blobUrl,
-      tempId: uploaded.id,
-      referenceBlobUrl: references.find((r) => r.sku === selectedSku)?.blobUrl,
-    };
+      // Store only URLs and SKU in sessionStorage (lightweight!)
+      const comparisonData = {
+        sku: selectedSku,
+        tempBlobUrl: uploaded.blobUrl,
+        tempId: uploaded.id,
+        referenceBlobUrl: references.find((r) => r.sku === selectedSku)?.blobUrl,
+      };
 
-    sessionStorage.setItem("bat-comparison", JSON.stringify(comparisonData));
-    router.push("/results");
+      sessionStorage.setItem("bat-comparison", JSON.stringify(comparisonData));
+      router.push("/results");
+    } catch (err) {
+      console.error("Compare failed:", err);
+      setError("Erreur lors du lancement de la comparaison.");
+      setComparing(false);
+    }
   };
 
   const selectedRef = references.find((r) => r.sku === selectedSku);
@@ -118,7 +116,12 @@ function CompareContent() {
         Comparer un BAT
       </h1>
 
-      {/* Step 1: Select reference */}
+      {error && (
+        <div className="mb-6 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
         <h2 className="font-semibold text-slate-900 mb-3">
           1. Sélectionner la référence
@@ -150,7 +153,6 @@ function CompareContent() {
         )}
       </div>
 
-      {/* Step 2: Upload new BAT */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
         <h2 className="font-semibold text-slate-900 mb-3">
           2. Uploader le nouveau BAT
@@ -173,7 +175,6 @@ function CompareContent() {
         )}
       </div>
 
-      {/* Progress */}
       {progress && (
         <div className="flex items-center gap-3 mb-6">
           <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -181,18 +182,15 @@ function CompareContent() {
         </div>
       )}
 
-      {/* Step 3: Launch comparison */}
       <button
         onClick={handleCompare}
-        disabled={
-          !selectedSku || refPages.length === 0 || newPages.length === 0 || comparing
-        }
+        disabled={!selectedSku || refPages.length === 0 || newPages.length === 0 || comparing}
         className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {comparing ? (
           <span className="flex items-center justify-center gap-2">
             <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Comparaison en cours...
+            Upload en cours...
           </span>
         ) : (
           "Lancer la comparaison"

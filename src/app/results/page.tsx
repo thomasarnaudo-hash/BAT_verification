@@ -8,9 +8,9 @@ import {
   SpellCheckResult,
   SignatureResult,
 } from "@/types";
+import { renderPdf, imageDataToDataUrl } from "@/lib/pdf-utils";
 import { comparePages } from "@/lib/pixel-compare";
 import { compareText } from "@/lib/text-diff";
-import { imageDataToDataUrl } from "@/lib/pdf-utils";
 import PixelDiffViewer from "@/components/PixelDiffViewer";
 import TextDiffViewer from "@/components/TextDiffViewer";
 import SpellCheckReport from "@/components/SpellCheckReport";
@@ -18,19 +18,12 @@ import SignatureStatusComponent from "@/components/SignatureStatus";
 
 type Tab = "visual" | "text" | "spelling" | "signature";
 
-interface StoredPageData {
-  pageNumber: number;
-  text: string;
-  width: number;
-  height: number;
-  imageDataArray: number[];
-}
-
 export default function ResultsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("visual");
   const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState("Chargement des données...");
+  const [progress, setProgress] = useState("Chargement des PDFs...");
+  const [error, setError] = useState("");
 
   const [pixelDiff, setPixelDiff] = useState<PixelDiffResult | null>(null);
   const [textDiff, setTextDiff] = useState<TextDiffResult | null>(null);
@@ -48,8 +41,6 @@ export default function ResultsPage() {
 
     const data = JSON.parse(raw) as {
       sku: string;
-      refPages: StoredPageData[];
-      newPages: StoredPageData[];
       tempBlobUrl: string;
       tempId: string;
       referenceBlobUrl: string;
@@ -58,100 +49,79 @@ export default function ResultsPage() {
     setSku(data.sku);
 
     const runAnalysis = async () => {
-      // Reconstruct ImageData from stored arrays
-      const refPages = data.refPages.map((p) => ({
-        imageData: new ImageData(
-          new Uint8ClampedArray(p.imageDataArray),
-          p.width,
-          p.height
-        ),
-        text: p.text,
-        width: p.width,
-        height: p.height,
-        pageNumber: p.pageNumber,
-      }));
-
-      const newPages = data.newPages.map((p) => ({
-        imageData: new ImageData(
-          new Uint8ClampedArray(p.imageDataArray),
-          p.width,
-          p.height
-        ),
-        text: p.text,
-        width: p.width,
-        height: p.height,
-        pageNumber: p.pageNumber,
-      }));
-
-      // 1. Pixel comparison (client-side)
-      setProgress("Comparaison visuelle pixel par pixel...");
-      const pixResult = comparePages(refPages, newPages);
-      setPixelDiff(pixResult);
-
-      // 2. Text comparison (client-side)
-      setProgress("Comparaison textuelle...");
-      const txtResult = compareText(
-        refPages.map((p) => p.text),
-        newPages.map((p) => p.text)
-      );
-      setTextDiff(txtResult);
-
-      // 3. Spell check (server-side)
-      setProgress("Vérification orthographique...");
       try {
+        // 1. Render both PDFs (from URLs, in the browser)
+        setProgress("Rendu du PDF de référence...");
+        const refPages = await renderPdf(data.referenceBlobUrl, 1.5, (p, t) =>
+          setProgress(`Rendu référence : page ${p}/${t}`)
+        );
+
+        setProgress("Rendu du nouveau BAT...");
+        const newPages = await renderPdf(data.tempBlobUrl, 1.5, (p, t) =>
+          setProgress(`Rendu nouveau BAT : page ${p}/${t}`)
+        );
+
+        // 2. Pixel comparison
+        setProgress("Comparaison visuelle pixel par pixel...");
+        const pixResult = comparePages(refPages, newPages);
+        setPixelDiff(pixResult);
+
+        // 3. Text comparison
+        setProgress("Comparaison textuelle...");
+        const txtResult = compareText(
+          refPages.map((p) => p.text),
+          newPages.map((p) => p.text)
+        );
+        setTextDiff(txtResult);
+
+        // 4. Spell check (server-side, in parallel with signature)
+        setProgress("Vérification orthographique et signature...");
         const allText = newPages.map((p) => p.text).join("\n\n");
-        const spellRes = await fetch("/api/spellcheck", {
+
+        const spellPromise = fetch("/api/spellcheck", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: allText, languages: ["FR", "EN"] }),
-        });
-        if (spellRes.ok) {
-          setSpellCheck(await spellRes.json());
-        }
-      } catch (err) {
-        console.error("Spellcheck failed:", err);
-        setSpellCheck({ errors: [], totalErrors: 0 });
-      }
+        })
+          .then((r) => (r.ok ? r.json() : { errors: [], totalErrors: 0 }))
+          .catch(() => ({ errors: [], totalErrors: 0 }));
 
-      // 4. Signature detection (server-side)
-      setProgress("Détection de signature...");
-      try {
-        const formData = new FormData();
-
-        // Send page images for handwritten detection
-        const pageImages = newPages.map((p) => {
-          const dataUrl = imageDataToDataUrl(p.imageData);
-          const base64 = dataUrl.split(",")[1];
-          return { pageNumber: p.pageNumber, base64 };
-        });
-        formData.append("pages", JSON.stringify(pageImages));
-
-        // Also send the PDF file for digital signature detection
-        if (data.tempBlobUrl) {
+        // 5. Signature detection (server-side, in parallel)
+        const sigPromise = (async () => {
+          const formData = new FormData();
+          // Send only the last page image to Gemini (signatures are usually at the end)
+          const lastPage = newPages[newPages.length - 1];
+          if (lastPage) {
+            const dataUrl = imageDataToDataUrl(lastPage.imageData);
+            const base64 = dataUrl.split(",")[1];
+            const pageImages = [{ pageNumber: lastPage.pageNumber, base64 }];
+            formData.append("pages", JSON.stringify(pageImages));
+          }
+          // Send the PDF for digital signature detection
           try {
             const pdfRes = await fetch(data.tempBlobUrl);
             const pdfBlob = await pdfRes.blob();
             formData.append("file", pdfBlob, "new.pdf");
           } catch {
-            // PDF fetch might fail, continue without digital sig check
+            // continue without digital sig
           }
-        }
+          const sigRes = await fetch("/api/signature", { method: "POST", body: formData });
+          return sigRes.ok ? sigRes.json() : null;
+        })().catch(() => null);
 
-        const sigRes = await fetch("/api/signature", {
-          method: "POST",
-          body: formData,
-        });
-        if (sigRes.ok) {
-          setSignatureResult(await sigRes.json());
-        }
+        // Wait for both in parallel
+        const [spellResult, sigResult] = await Promise.all([spellPromise, sigPromise]);
+        setSpellCheck(spellResult);
+        if (sigResult) setSignatureResult(sigResult);
+
+        // Overall score
+        setOverallScore(pixResult.similarityPercent);
+        setLoading(false);
       } catch (err) {
-        console.error("Signature detection failed:", err);
+        console.error("Analysis failed:", err);
+        setError(`Erreur pendant l'analyse : ${err instanceof Error ? err.message : String(err)}`);
+        setLoading(false);
       }
-
-      // Overall score (weighted average)
-      const score = pixResult.similarityPercent;
-      setOverallScore(score);
-      setLoading(false);
     };
 
     runAnalysis();
@@ -172,8 +142,20 @@ export default function ResultsPage() {
   if (loading) {
     return (
       <div className="text-center py-16">
-        <div className="inline-block w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="inline-block w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
         <p className="text-slate-600">{progress}</p>
+        {error && <p className="text-red-600 mt-3">{error}</p>}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-red-600 mb-4">{error}</p>
+        <button onClick={() => router.push("/compare")} className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm">
+          Retour
+        </button>
       </div>
     );
   }
@@ -204,7 +186,6 @@ export default function ResultsPage() {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-slate-100 rounded-xl p-1">
         {tabs.map((tab) => (
           <button
@@ -226,23 +207,13 @@ export default function ResultsPage() {
         ))}
       </div>
 
-      {/* Tab content */}
       <div className="mb-8">
-        {activeTab === "visual" && pixelDiff && (
-          <PixelDiffViewer result={pixelDiff} />
-        )}
-        {activeTab === "text" && textDiff && (
-          <TextDiffViewer result={textDiff} />
-        )}
-        {activeTab === "spelling" && spellCheck && (
-          <SpellCheckReport result={spellCheck} />
-        )}
-        {activeTab === "signature" && signatureResult && (
-          <SignatureStatusComponent result={signatureResult} />
-        )}
+        {activeTab === "visual" && pixelDiff && <PixelDiffViewer result={pixelDiff} />}
+        {activeTab === "text" && textDiff && <TextDiffViewer result={textDiff} />}
+        {activeTab === "spelling" && spellCheck && <SpellCheckReport result={spellCheck} />}
+        {activeTab === "signature" && signatureResult && <SignatureStatusComponent result={signatureResult} />}
       </div>
 
-      {/* Validate button */}
       <div className="flex gap-3">
         <button
           onClick={() => router.push("/compare")}
