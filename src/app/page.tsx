@@ -11,6 +11,8 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [error, setError] = useState("");
 
   const fetchReferences = useCallback(async () => {
     try {
@@ -29,14 +31,21 @@ export default function Dashboard() {
     fetchReferences();
   }, [fetchReferences]);
 
-  const handleAddReference = async (file: File) => {
+  const handleFileSelected = (file: File) => {
+    setSelectedFile(file);
+    setError("");
+  };
+
+  const handleAddReference = async () => {
+    if (!selectedFile) return;
     setUploading(true);
+    setError("");
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", selectedFile);
 
       // Parse filename to extract SKU
-      const match = file.name.match(/SKU[_\s]?([^_\s-]+)/i);
+      const match = selectedFile.name.match(/SKU[_\s]?([^_\s-]+)/i);
       const sku = match ? match[1] : crypto.randomUUID().slice(0, 8).toUpperCase();
       formData.append("sku", sku);
 
@@ -46,10 +55,15 @@ export default function Dashboard() {
       });
       if (res.ok) {
         setShowAdd(false);
+        setSelectedFile(null);
         await fetchReferences();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Erreur serveur (${res.status}). Vérifiez que Blob Storage est configuré sur Vercel.`);
       }
     } catch (err) {
       console.error("Failed to add reference:", err);
+      setError("Erreur réseau. Vérifiez votre connexion.");
     } finally {
       setUploading(false);
     }
@@ -100,10 +114,31 @@ export default function Dashboard() {
             Le SKU, nom du produit et langues seront extraits automatiquement du nom de fichier.
           </p>
           <FileUpload
-            onFileSelected={handleAddReference}
-            loading={uploading}
+            onFileSelected={handleFileSelected}
+            loading={false}
             accept=".pdf"
           />
+
+          {selectedFile && (
+            <div className="mt-4 flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-700 font-medium truncate">
+                {selectedFile.name}
+              </p>
+              <button
+                onClick={handleAddReference}
+                disabled={uploading}
+                className="ml-4 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex-shrink-0"
+              >
+                {uploading ? "Enregistrement..." : "Enregistrer comme référence"}
+              </button>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+          )}
         </div>
       )}
 
