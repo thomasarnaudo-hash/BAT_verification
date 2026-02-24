@@ -2,6 +2,17 @@ import { diffWords } from "diff";
 import { TextDiffResult, TextDiffPage, TextChange } from "@/types";
 
 /**
+ * Normalise le texte pour une comparaison fiable :
+ * espaces multiples → espace simple, trim chaque ligne.
+ */
+function normalizeForDiff(text: string): string {
+  return text
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .trim();
+}
+
+/**
  * Compare text extracted from two PDF versions page by page.
  */
 export function compareText(
@@ -13,8 +24,8 @@ export function compareText(
   let totalChanges = 0;
 
   for (let i = 0; i < pageCount; i++) {
-    const refText = refTexts[i] || "";
-    const newText = newTexts[i] || "";
+    const refText = normalizeForDiff(refTexts[i] || "");
+    const newText = normalizeForDiff(newTexts[i] || "");
 
     const diff = diffWords(refText, newText);
     const changes: TextChange[] = diff.map((part) => ({

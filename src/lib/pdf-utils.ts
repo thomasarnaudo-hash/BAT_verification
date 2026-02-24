@@ -40,9 +40,13 @@ export async function renderPdf(
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
     const textContent = await page.getTextContent();
-    const text = textContent.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ");
+    const rawText = textContent.items
+      .map((item) => {
+        if (!("str" in item)) return "";
+        return item.str + ("hasEOL" in item && item.hasEOL ? "\n" : " ");
+      })
+      .join("");
+    const text = cleanText(rawText);
 
     pages.push({
       pageNumber: i,
@@ -71,6 +75,20 @@ export function imageDataToDataUrl(imageData: ImageData): string {
 /**
  * Convert ImageData to a Blob (for sending to API)
  */
+/**
+ * Nettoie le texte extrait d'un PDF :
+ * - Remplace les espaces multiples par un espace simple
+ * - Supprime les espaces en début/fin de ligne
+ * - Supprime les lignes vides en excès
+ */
+export function cleanText(text: string): string {
+  return text
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function imageDataToBlob(imageData: ImageData): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = imageData.width;

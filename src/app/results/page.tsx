@@ -15,6 +15,7 @@ import PixelDiffViewer from "@/components/PixelDiffViewer";
 import TextDiffViewer from "@/components/TextDiffViewer";
 import SpellCheckReport from "@/components/SpellCheckReport";
 import SignatureStatusComponent from "@/components/SignatureStatus";
+import FeedbackForm from "@/components/FeedbackForm";
 
 type Tab = "visual" | "text" | "spelling" | "signature";
 
@@ -31,6 +32,8 @@ export default function ResultsPage() {
   const [signatureResult, setSignatureResult] = useState<SignatureResult | null>(null);
   const [overallScore, setOverallScore] = useState<number>(0);
   const [sku, setSku] = useState("");
+  const [referenceBlobUrl, setReferenceBlobUrl] = useState("");
+  const [newBlobUrl, setNewBlobUrl] = useState("");
 
   useEffect(() => {
     const raw = sessionStorage.getItem("bat-comparison");
@@ -47,6 +50,8 @@ export default function ResultsPage() {
     };
 
     setSku(data.sku);
+    setReferenceBlobUrl(data.referenceBlobUrl);
+    setNewBlobUrl(data.tempBlobUrl);
 
     const runAnalysis = async () => {
       try {
@@ -81,7 +86,7 @@ export default function ResultsPage() {
         const spellPromise = fetch("/api/spellcheck", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: allText, languages: ["FR", "EN"] }),
+          body: JSON.stringify({ text: allText }),
         })
           .then((r) => (r.ok ? r.json() : { errors: [], totalErrors: 0 }))
           .catch(() => ({ errors: [], totalErrors: 0 }));
@@ -214,7 +219,13 @@ export default function ResultsPage() {
         {activeTab === "signature" && signatureResult && <SignatureStatusComponent result={signatureResult} />}
       </div>
 
-      <div className="flex gap-3">
+      <FeedbackForm
+        sku={sku}
+        referenceBlobUrl={referenceBlobUrl}
+        newBlobUrl={newBlobUrl}
+      />
+
+      <div className="flex gap-3 mt-6">
         <button
           onClick={() => router.push("/compare")}
           className="px-6 py-3 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50"
