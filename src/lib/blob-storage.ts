@@ -27,6 +27,7 @@ export async function saveMetadata(store: MetadataStore): Promise<void> {
   await put(METADATA_PATH, blob, {
     access: "public",
     addRandomSuffix: false,
+    allowOverwrite: true,
   });
 }
 
@@ -80,6 +81,7 @@ export async function uploadReferencePdf(
   const blob = await put(`references/${sku}/current.pdf`, file, {
     access: "public",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/pdf",
   });
   return blob.url;
@@ -106,6 +108,7 @@ export async function archiveCurrentPdf(
     {
       access: "public",
       addRandomSuffix: false,
+    allowOverwrite: true,
       contentType: "application/pdf",
     }
   );
@@ -118,6 +121,7 @@ export async function uploadTempPdf(
   const blob = await put(`temp/${id}.pdf`, file, {
     access: "public",
     addRandomSuffix: false,
+    allowOverwrite: true,
     contentType: "application/pdf",
   });
   return blob.url;
