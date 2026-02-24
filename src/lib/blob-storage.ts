@@ -54,14 +54,19 @@ export async function addReference(ref: Reference): Promise<void> {
 }
 
 export async function deleteReference(sku: string): Promise<void> {
+  // 1. Remove from metadata first (so it disappears from the list)
   const meta = await getMetadata();
   meta.references = meta.references.filter((r) => r.sku !== sku);
   await saveMetadata(meta);
 
-  // Delete blobs
-  const blobs = await list({ prefix: `references/${sku}/` });
-  for (const blob of blobs.blobs) {
-    await del(blob.url);
+  // 2. Try to delete PDF blobs (non-blocking — if this fails, the ref is still removed)
+  try {
+    const blobs = await list({ prefix: `references/${sku}/` });
+    if (blobs.blobs.length > 0) {
+      await del(blobs.blobs.map((b) => b.url));
+    }
+  } catch (err) {
+    console.error(`Failed to delete blobs for ${sku}:`, err);
   }
 }
 
