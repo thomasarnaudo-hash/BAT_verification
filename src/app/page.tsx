@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Reference } from "@/types";
+import { parseFilename } from "@/lib/metadata";
 import ReferenceCard from "@/components/ReferenceCard";
 import FileUpload from "@/components/FileUpload";
 
@@ -13,6 +14,8 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [error, setError] = useState("");
+  const [formSku, setFormSku] = useState("");
+  const [formName, setFormName] = useState("");
 
   const fetchReferences = useCallback(async () => {
     try {
@@ -34,20 +37,32 @@ export default function Dashboard() {
   const handleFileSelected = (file: File) => {
     setSelectedFile(file);
     setError("");
+    // Pre-fill form from filename
+    const parsed = parseFilename(file.name);
+    if (parsed) {
+      setFormSku(parsed.sku);
+      setFormName(`${parsed.productName} — ${parsed.description}`);
+    } else {
+      setFormSku("");
+      setFormName("");
+    }
   };
 
   const handleAddReference = async () => {
     if (!selectedFile) return;
+    if (!formName.trim()) {
+      setError("Le nom de la référence est obligatoire.");
+      return;
+    }
     setUploading(true);
     setError("");
     try {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      // Parse filename to extract SKU
-      const match = selectedFile.name.match(/SKU[_\s]?([^_\s-]+)/i);
-      const sku = match ? match[1] : crypto.randomUUID().slice(0, 8).toUpperCase();
+      const sku = formSku.trim() || crypto.randomUUID().slice(0, 8).toUpperCase();
       formData.append("sku", sku);
+      formData.append("productName", formName.trim());
 
       const res = await fetch("/api/references", {
         method: "POST",
@@ -56,6 +71,8 @@ export default function Dashboard() {
       if (res.ok) {
         setShowAdd(false);
         setSelectedFile(null);
+        setFormSku("");
+        setFormName("");
         await fetchReferences();
       } else {
         const data = await res.json().catch(() => ({}));
@@ -120,14 +137,40 @@ export default function Dashboard() {
           />
 
           {selectedFile && (
-            <div className="mt-4 flex items-center justify-between p-3 bg-blue-50 rounded-lg">
-              <p className="text-sm text-blue-700 font-medium truncate">
-                {selectedFile.name}
+            <div className="mt-4 space-y-3 p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <p className="text-xs text-slate-400 truncate">
+                Fichier : {selectedFile.name}
               </p>
+              <div>
+                <label htmlFor="refName" className="block text-sm font-medium text-slate-700 mb-1">
+                  Nom de la référence *
+                </label>
+                <input
+                  id="refName"
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="Ex : Sachet Gel mains — 1 mois retail"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="refSku" className="block text-sm font-medium text-slate-700 mb-1">
+                  SKU (optionnel, auto-détecté)
+                </label>
+                <input
+                  id="refSku"
+                  type="text"
+                  value={formSku}
+                  onChange={(e) => setFormSku(e.target.value)}
+                  placeholder="Ex : 1V13BR03DQ23"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
               <button
                 onClick={handleAddReference}
-                disabled={uploading}
-                className="ml-4 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                disabled={uploading || !formName.trim()}
+                className="w-full px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {uploading ? "Enregistrement..." : "Enregistrer comme référence"}
               </button>
