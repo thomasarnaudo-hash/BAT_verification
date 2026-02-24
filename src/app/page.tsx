@@ -19,7 +19,7 @@ export default function Dashboard() {
 
   const fetchReferences = useCallback(async () => {
     try {
-      const res = await fetch("/api/references");
+      const res = await fetch("/api/references", { cache: "no-store" });
       if (res.ok) {
         setReferences(await res.json());
       }

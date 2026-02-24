@@ -66,7 +66,15 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ sku: string }> }
 ) {
-  const { sku } = await params;
-  await deleteReference(sku);
-  return NextResponse.json({ ok: true });
+  try {
+    const { sku } = await params;
+    await deleteReference(sku);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/references/[sku] error:", err);
+    return NextResponse.json(
+      { error: String(err instanceof Error ? err.message : err) },
+      { status: 500 }
+    );
+  }
 }
