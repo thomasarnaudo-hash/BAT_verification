@@ -8,7 +8,7 @@ import {
   SpellCheckResult,
   SignatureResult,
 } from "@/types";
-import { renderPdf, imageDataToDataUrl, imageDataToJpegBase64 } from "@/lib/pdf-utils";
+import { renderPdf, imageDataToDataUrl } from "@/lib/pdf-utils";
 import { comparePages } from "@/lib/pixel-compare";
 import { compareText } from "@/lib/text-diff";
 import PixelDiffViewer from "@/components/PixelDiffViewer";
@@ -72,16 +72,25 @@ export default function ResultsPage() {
         setPixelDiff(pixResult);
 
         // 3. OCR via Gemini Vision (extraire le texte réel des images)
+        // Rendre à haute résolution (4x) spécialement pour l'OCR
+        setProgress("Rendu haute résolution pour OCR...");
+        const refPagesHR = await renderPdf(data.referenceBlobUrl, 4, (p, t) =>
+          setProgress(`OCR référence : rendu page ${p}/${t}`)
+        );
+        const newPagesHR = await renderPdf(data.tempBlobUrl, 4, (p, t) =>
+          setProgress(`OCR nouveau BAT : rendu page ${p}/${t}`)
+        );
+
         setProgress("Extraction du texte par OCR (Gemini)...");
 
-        // Convertir en JPEG compressé pour réduire la taille (PNG trop lourd)
-        const refPageImages = refPages.map((p) => ({
+        // PNG pour meilleure qualité OCR (pas de compression JPEG)
+        const refPageImages = refPagesHR.map((p) => ({
           pageNumber: p.pageNumber,
-          base64: imageDataToJpegBase64(p.imageData, 0.85),
+          base64: imageDataToDataUrl(p.imageData).split(",")[1],
         }));
-        const newPageImages = newPages.map((p) => ({
+        const newPageImages = newPagesHR.map((p) => ({
           pageNumber: p.pageNumber,
-          base64: imageDataToJpegBase64(p.imageData, 0.85),
+          base64: imageDataToDataUrl(p.imageData).split(",")[1],
         }));
 
         // OCR les 2 PDFs en parallèle (1 page à la fois pour éviter les timeouts)
