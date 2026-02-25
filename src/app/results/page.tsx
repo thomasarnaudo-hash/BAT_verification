@@ -8,7 +8,7 @@ import {
   SpellCheckResult,
   SignatureResult,
 } from "@/types";
-import { renderPdf, imageDataToDataUrl } from "@/lib/pdf-utils";
+import { renderPdf, imageDataToDataUrl, imageDataToJpegBase64 } from "@/lib/pdf-utils";
 import { comparePages } from "@/lib/pixel-compare";
 import { compareText } from "@/lib/text-diff";
 import PixelDiffViewer from "@/components/PixelDiffViewer";
@@ -73,31 +73,40 @@ export default function ResultsPage() {
 
         // 3. OCR via Gemini Vision (extraire le texte réel des images)
         setProgress("Extraction du texte par OCR (Gemini)...");
+
+        // Convertir en JPEG compressé pour réduire la taille (PNG trop lourd)
         const refPageImages = refPages.map((p) => ({
           pageNumber: p.pageNumber,
-          base64: imageDataToDataUrl(p.imageData).split(",")[1],
+          base64: imageDataToJpegBase64(p.imageData, 0.85),
         }));
         const newPageImages = newPages.map((p) => ({
           pageNumber: p.pageNumber,
-          base64: imageDataToDataUrl(p.imageData).split(",")[1],
+          base64: imageDataToJpegBase64(p.imageData, 0.85),
         }));
 
-        // OCR les 2 PDFs en parallèle
-        const [refOcrRes, newOcrRes] = await Promise.all([
-          fetch("/api/ocr", {
+        // OCR les 2 PDFs en parallèle (1 page à la fois pour éviter les timeouts)
+        const ocrOnePage = async (pageImg: { pageNumber: number; base64: string }) => {
+          const res = await fetch("/api/ocr", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pages: refPageImages }),
-          }).then((r) => r.ok ? r.json() : { pages: [] }),
-          fetch("/api/ocr", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pages: newPageImages }),
-          }).then((r) => r.ok ? r.json() : { pages: [] }),
+            body: JSON.stringify({ pages: [pageImg] }),
+          });
+          if (!res.ok) {
+            console.error("OCR failed:", res.status, await res.text());
+            return { pageNumber: pageImg.pageNumber, text: "" };
+          }
+          const data = await res.json();
+          return data.pages?.[0] || { pageNumber: pageImg.pageNumber, text: "" };
+        };
+
+        // Lancer toutes les pages en parallèle
+        const [refOcrResults, newOcrResults] = await Promise.all([
+          Promise.all(refPageImages.map(ocrOnePage)),
+          Promise.all(newPageImages.map(ocrOnePage)),
         ]);
 
-        const refOcrTexts: string[] = refOcrRes.pages?.map((p: { text: string }) => p.text) || [];
-        const newOcrTexts: string[] = newOcrRes.pages?.map((p: { text: string }) => p.text) || [];
+        const refOcrTexts: string[] = refOcrResults.map((p) => p.text);
+        const newOcrTexts: string[] = newOcrResults.map((p) => p.text);
 
         // 4. Text comparison (sur le texte OCR)
         setProgress("Comparaison textuelle...");

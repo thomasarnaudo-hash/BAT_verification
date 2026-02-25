@@ -89,6 +89,19 @@ export function cleanText(text: string): string {
     .trim();
 }
 
+/**
+ * Convertit ImageData en base64 JPEG compressé (pour envoi à l'API OCR).
+ * Réduit la taille ~10x par rapport au PNG base64.
+ */
+export function imageDataToJpegBase64(imageData: ImageData, quality = 0.8): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL("image/jpeg", quality).split(",")[1];
+}
+
 export async function imageDataToBlob(imageData: ImageData): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = imageData.width;

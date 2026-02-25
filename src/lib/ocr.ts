@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
  * Extraire le texte d'une image de page PDF via Gemini Vision (OCR).
  * Renvoie le texte brut tel que lu sur l'image.
  */
-export async function ocrPageImage(base64: string): Promise<string> {
+export async function ocrPageImage(base64: string, mimeType = "image/jpeg"): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY non configurée");
@@ -16,7 +16,7 @@ export async function ocrPageImage(base64: string): Promise<string> {
   const result = await model.generateContent([
     {
       inlineData: {
-        mimeType: "image/png",
+        mimeType,
         data: base64,
       },
     },
