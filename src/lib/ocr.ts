@@ -14,6 +14,7 @@ Règles strictes :
 /**
  * Extraire le texte d'un PDF via Gemini Vision.
  * Le serveur télécharge le PDF depuis l'URL et l'envoie directement à Gemini.
+ * Inclut un retry automatique en cas de rate limit (429).
  */
 export async function ocrFromPdfUrl(pdfUrl: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -32,15 +33,32 @@ export async function ocrFromPdfUrl(pdfUrl: string): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        mimeType: "application/pdf",
-        data: base64,
-      },
-    },
-    OCR_PROMPT,
-  ]);
+  // Retry avec backoff en cas de 429
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const result = await model.generateContent([
+        {
+          inlineData: {
+            mimeType: "application/pdf",
+            data: base64,
+          },
+        },
+        OCR_PROMPT,
+      ]);
+      return result.response.text().trim();
+    } catch (err) {
+      const is429 = String(err).includes("429") || String(err).includes("Resource exhausted");
+      if (is429 && attempt < maxRetries - 1) {
+        // Attendre avant de réessayer (2s, 5s)
+        const delay = (attempt + 1) * 2500;
+        console.log(`OCR rate limited, retry in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
 
-  return result.response.text().trim();
+  throw new Error("OCR failed after retries");
 }

@@ -89,11 +89,11 @@ export default function ResultsPage() {
           return resData.text || "";
         };
 
-        // OCR les 2 PDFs en parallèle (le serveur les télécharge lui-même)
-        const [refOcrText, newOcrText] = await Promise.all([
-          ocrFromUrl(data.referenceBlobUrl),
-          ocrFromUrl(data.tempBlobUrl),
-        ]);
+        // OCR les 2 PDFs séquentiellement (évite le rate limit Gemini)
+        setProgress("OCR de la référence...");
+        const refOcrText = await ocrFromUrl(data.referenceBlobUrl);
+        setProgress("OCR du nouveau BAT...");
+        const newOcrText = await ocrFromUrl(data.tempBlobUrl);
 
         const refOcrTexts = [refOcrText];
         const newOcrTexts = [newOcrText];
