@@ -7,9 +7,21 @@ export const maxDuration = 30;
 export async function POST(request: NextRequest) {
   try {
     // Vérifier que la clé API est configurée
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      // Debug : lister les env vars qui commencent par GEMINI (sans révéler les valeurs)
+      const geminiVars = Object.keys(process.env).filter(k => k.includes("GEMINI"));
       return NextResponse.json(
-        { error: "GEMINI_API_KEY non configurée sur le serveur", pages: [] },
+        {
+          error: "GEMINI_API_KEY non configurée sur le serveur",
+          debug: {
+            geminiVarsFound: geminiVars,
+            allEnvKeysCount: Object.keys(process.env).length,
+            hasVercelEnv: !!process.env.VERCEL,
+            nodeEnv: process.env.NODE_ENV,
+          },
+          pages: [],
+        },
         { status: 500 }
       );
     }
