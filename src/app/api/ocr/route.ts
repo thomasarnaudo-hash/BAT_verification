@@ -1,46 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ocrPageImage } from "@/lib/ocr";
+import { ocrFromPdfUrl } from "@/lib/ocr";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
-// POST /api/ocr — extract text from page images via Gemini Vision
+// POST /api/ocr — extract text from a PDF via Gemini Vision
+// Body: { pdfUrl: string }
+// Le serveur télécharge le PDF et l'envoie directement à Gemini (pas de transit par le navigateur)
 export async function POST(request: NextRequest) {
   try {
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY non configurée sur le serveur", pages: [] },
+        { error: "GEMINI_API_KEY non configurée", text: "" },
         { status: 500 }
       );
     }
 
-    const body = await request.json();
-    const { pages } = body as {
-      pages: { pageNumber: number; base64: string }[];
-    };
+    const { pdfUrl } = (await request.json()) as { pdfUrl: string };
 
-    if (!pages || pages.length === 0) {
+    if (!pdfUrl) {
       return NextResponse.json(
-        { error: "pages array is required", pages: [] },
+        { error: "pdfUrl is required", text: "" },
         { status: 400 }
       );
     }
 
-    const results: { pageNumber: number; text: string; error?: string }[] = [];
-
-    for (const page of pages) {
-      try {
-        const text = await ocrPageImage(page.base64);
-        results.push({ pageNumber: page.pageNumber, text });
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        console.error(`OCR failed for page ${page.pageNumber}:`, errorMsg);
-        results.push({ pageNumber: page.pageNumber, text: "", error: errorMsg });
-      }
-    }
-
-    return NextResponse.json({ pages: results });
+    const text = await ocrFromPdfUrl(pdfUrl);
+    return NextResponse.json({ text });
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: errorMsg, pages: [] }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("OCR error:", msg);
+    return NextResponse.json({ error: msg, text: "" }, { status: 500 });
   }
 }

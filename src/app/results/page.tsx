@@ -71,51 +71,32 @@ export default function ResultsPage() {
         const pixResult = comparePages(refPages, newPages);
         setPixelDiff(pixResult);
 
-        // 3. OCR via Gemini Vision (extraire le texte réel des images)
-        // Rendre à haute résolution (4x) spécialement pour l'OCR
-        setProgress("Rendu haute résolution pour OCR...");
-        const refPagesHR = await renderPdf(data.referenceBlobUrl, 4, (p, t) =>
-          setProgress(`OCR référence : rendu page ${p}/${t}`)
-        );
-        const newPagesHR = await renderPdf(data.tempBlobUrl, 4, (p, t) =>
-          setProgress(`OCR nouveau BAT : rendu page ${p}/${t}`)
-        );
-
+        // 3. OCR via Gemini Vision — le serveur télécharge les PDFs directement
         setProgress("Extraction du texte par OCR (Gemini)...");
 
-        // PNG pour meilleure qualité OCR (pas de compression JPEG)
-        const refPageImages = refPagesHR.map((p) => ({
-          pageNumber: p.pageNumber,
-          base64: imageDataToDataUrl(p.imageData).split(",")[1],
-        }));
-        const newPageImages = newPagesHR.map((p) => ({
-          pageNumber: p.pageNumber,
-          base64: imageDataToDataUrl(p.imageData).split(",")[1],
-        }));
-
-        // OCR les 2 PDFs en parallèle (1 page à la fois pour éviter les timeouts)
-        const ocrOnePage = async (pageImg: { pageNumber: number; base64: string }) => {
+        const ocrFromUrl = async (pdfUrl: string): Promise<string> => {
           const res = await fetch("/api/ocr", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pages: [pageImg] }),
+            body: JSON.stringify({ pdfUrl }),
           });
           if (!res.ok) {
-            console.error("OCR failed:", res.status, await res.text());
-            return { pageNumber: pageImg.pageNumber, text: "" };
+            const errData = await res.json().catch(() => ({}));
+            console.error("OCR failed:", errData);
+            return "";
           }
-          const data = await res.json();
-          return data.pages?.[0] || { pageNumber: pageImg.pageNumber, text: "" };
+          const resData = await res.json();
+          return resData.text || "";
         };
 
-        // Lancer toutes les pages en parallèle
-        const [refOcrResults, newOcrResults] = await Promise.all([
-          Promise.all(refPageImages.map(ocrOnePage)),
-          Promise.all(newPageImages.map(ocrOnePage)),
+        // OCR les 2 PDFs en parallèle (le serveur les télécharge lui-même)
+        const [refOcrText, newOcrText] = await Promise.all([
+          ocrFromUrl(data.referenceBlobUrl),
+          ocrFromUrl(data.tempBlobUrl),
         ]);
 
-        const refOcrTexts: string[] = refOcrResults.map((p) => p.text);
-        const newOcrTexts: string[] = newOcrResults.map((p) => p.text);
+        const refOcrTexts = [refOcrText];
+        const newOcrTexts = [newOcrText];
 
         // 4. Text comparison (sur le texte OCR)
         setProgress("Comparaison textuelle...");
@@ -137,10 +118,12 @@ export default function ResultsPage() {
         // 6. Signature detection (server-side, in parallel)
         const sigPromise = (async () => {
           const formData = new FormData();
+          // Envoyer la dernière page en image pour la détection de signature manuscrite
           const lastPage = newPages[newPages.length - 1];
           if (lastPage) {
-            const lastPageImage = newPageImages[newPageImages.length - 1];
-            formData.append("pages", JSON.stringify([lastPageImage]));
+            const dataUrl = imageDataToDataUrl(lastPage.imageData);
+            const base64 = dataUrl.split(",")[1];
+            formData.append("pages", JSON.stringify([{ pageNumber: lastPage.pageNumber, base64 }]));
           }
           try {
             const pdfRes = await fetch(data.tempBlobUrl);
