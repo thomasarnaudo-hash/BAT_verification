@@ -71,17 +71,42 @@ export default function ResultsPage() {
         const pixResult = comparePages(refPages, newPages);
         setPixelDiff(pixResult);
 
-        // 3. Text comparison
+        // 3. OCR via Gemini Vision (extraire le texte réel des images)
+        setProgress("Extraction du texte par OCR (Gemini)...");
+        const refPageImages = refPages.map((p) => ({
+          pageNumber: p.pageNumber,
+          base64: imageDataToDataUrl(p.imageData).split(",")[1],
+        }));
+        const newPageImages = newPages.map((p) => ({
+          pageNumber: p.pageNumber,
+          base64: imageDataToDataUrl(p.imageData).split(",")[1],
+        }));
+
+        // OCR les 2 PDFs en parallèle
+        const [refOcrRes, newOcrRes] = await Promise.all([
+          fetch("/api/ocr", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pages: refPageImages }),
+          }).then((r) => r.ok ? r.json() : { pages: [] }),
+          fetch("/api/ocr", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pages: newPageImages }),
+          }).then((r) => r.ok ? r.json() : { pages: [] }),
+        ]);
+
+        const refOcrTexts: string[] = refOcrRes.pages?.map((p: { text: string }) => p.text) || [];
+        const newOcrTexts: string[] = newOcrRes.pages?.map((p: { text: string }) => p.text) || [];
+
+        // 4. Text comparison (sur le texte OCR)
         setProgress("Comparaison textuelle...");
-        const txtResult = compareText(
-          refPages.map((p) => p.text),
-          newPages.map((p) => p.text)
-        );
+        const txtResult = compareText(refOcrTexts, newOcrTexts);
         setTextDiff(txtResult);
 
-        // 4. Spell check (server-side, in parallel with signature)
+        // 5. Spell check + Signature (en parallèle)
         setProgress("Vérification orthographique et signature...");
-        const allText = newPages.map((p) => p.text).join("\n\n");
+        const allText = newOcrTexts.join("\n\n");
 
         const spellPromise = fetch("/api/spellcheck", {
           method: "POST",
@@ -91,18 +116,14 @@ export default function ResultsPage() {
           .then((r) => (r.ok ? r.json() : { errors: [], totalErrors: 0 }))
           .catch(() => ({ errors: [], totalErrors: 0 }));
 
-        // 5. Signature detection (server-side, in parallel)
+        // 6. Signature detection (server-side, in parallel)
         const sigPromise = (async () => {
           const formData = new FormData();
-          // Send only the last page image to Gemini (signatures are usually at the end)
           const lastPage = newPages[newPages.length - 1];
           if (lastPage) {
-            const dataUrl = imageDataToDataUrl(lastPage.imageData);
-            const base64 = dataUrl.split(",")[1];
-            const pageImages = [{ pageNumber: lastPage.pageNumber, base64 }];
-            formData.append("pages", JSON.stringify(pageImages));
+            const lastPageImage = newPageImages[newPageImages.length - 1];
+            formData.append("pages", JSON.stringify([lastPageImage]));
           }
-          // Send the PDF for digital signature detection
           try {
             const pdfRes = await fetch(data.tempBlobUrl);
             const pdfBlob = await pdfRes.blob();
@@ -114,7 +135,6 @@ export default function ResultsPage() {
           return sigRes.ok ? sigRes.json() : null;
         })().catch(() => null);
 
-        // Wait for both in parallel
         const [spellResult, sigResult] = await Promise.all([spellPromise, sigPromise]);
         setSpellCheck(spellResult);
         if (sigResult) setSignatureResult(sigResult);
