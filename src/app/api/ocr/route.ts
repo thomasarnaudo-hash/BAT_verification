@@ -6,22 +6,9 @@ export const maxDuration = 30;
 // POST /api/ocr — extract text from page images via Gemini Vision
 export async function POST(request: NextRequest) {
   try {
-    // Vérifier que la clé API est configurée
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      // Debug : lister les env vars qui commencent par GEMINI (sans révéler les valeurs)
-      const geminiVars = Object.keys(process.env).filter(k => k.includes("GEMINI"));
+    if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
-        {
-          error: "GEMINI_API_KEY non configurée sur le serveur",
-          debug: {
-            geminiVarsFound: geminiVars,
-            allEnvKeysCount: Object.keys(process.env).length,
-            hasVercelEnv: !!process.env.VERCEL,
-            nodeEnv: process.env.NODE_ENV,
-          },
-          pages: [],
-        },
+        { error: "GEMINI_API_KEY non configurée sur le serveur", pages: [] },
         { status: 500 }
       );
     }
@@ -47,21 +34,13 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         console.error(`OCR failed for page ${page.pageNumber}:`, errorMsg);
-        results.push({
-          pageNumber: page.pageNumber,
-          text: "",
-          error: errorMsg,
-        });
+        results.push({ pageNumber: page.pageNumber, text: "", error: errorMsg });
       }
     }
 
     return NextResponse.json({ pages: results });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("OCR route error:", errorMsg);
-    return NextResponse.json(
-      { error: errorMsg, pages: [] },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: errorMsg, pages: [] }, { status: 500 });
   }
 }
