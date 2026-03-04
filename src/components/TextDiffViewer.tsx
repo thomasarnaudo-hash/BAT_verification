@@ -7,9 +7,10 @@ type ViewMode = "diff" | "reference" | "nouveau";
 
 interface TextDiffViewerProps {
   result: TextDiffResult;
+  ocrEmpty?: boolean;
 }
 
-export default function TextDiffViewer({ result }: TextDiffViewerProps) {
+export default function TextDiffViewer({ result, ocrEmpty }: TextDiffViewerProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>("diff");
   const page = result.pages[currentPage];
@@ -85,6 +86,22 @@ export default function TextDiffViewer({ result }: TextDiffViewerProps) {
           </button>
         ))}
       </div>
+
+      {/* Warning OCR vide */}
+      {ocrEmpty && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+          <span className="text-amber-500 text-lg leading-none">&#9888;</span>
+          <div>
+            <p className="text-sm font-medium text-amber-800">
+              L&apos;OCR n&apos;a extrait aucun texte
+            </p>
+            <p className="text-xs text-amber-600 mt-1">
+              Le packaging contient peut-être uniquement des images, ou le texte n&apos;a pas pu être lu.
+              La comparaison textuelle n&apos;est pas disponible pour ce document.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       {!hasText ? (

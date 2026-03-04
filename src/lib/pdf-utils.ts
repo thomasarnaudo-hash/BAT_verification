@@ -102,6 +102,51 @@ export function imageDataToJpegBase64(imageData: ImageData, quality = 0.8): stri
   return canvas.toDataURL("image/jpeg", quality).split(",")[1];
 }
 
+/**
+ * Crée 4 versions rotées d'une image (0°, 90°, 180°, 270°) en base64 JPEG.
+ * Utilisé pour l'OCR multi-orientation sur les packagings cosmétiques.
+ * Les images sont redimensionnées si nécessaire (max 1500px) pour limiter la taille du payload.
+ */
+export function createRotatedVersions(imageData: ImageData, quality = 0.5): string[] {
+  const { width, height } = imageData;
+
+  // Dessiner l'image source sur un canvas temporaire (une seule fois, réutilisé)
+  const srcCanvas = document.createElement("canvas");
+  srcCanvas.width = width;
+  srcCanvas.height = height;
+  const srcCtx = srcCanvas.getContext("2d")!;
+  srcCtx.putImageData(imageData, 0, 0);
+
+  // Redimensionner si trop grand (Gemini n'a pas besoin de plus de 1500px pour l'OCR)
+  const MAX_DIM = 1500;
+  const scale = Math.min(1, MAX_DIM / Math.max(width, height));
+  const sw = Math.round(width * scale);
+  const sh = Math.round(height * scale);
+
+  const angles = [0, 90, 180, 270];
+
+  return angles.map((angle) => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+
+    // Pour 90° et 270°, on inverse largeur/hauteur
+    if (angle === 90 || angle === 270) {
+      canvas.width = sh;
+      canvas.height = sw;
+    } else {
+      canvas.width = sw;
+      canvas.height = sh;
+    }
+
+    // Appliquer la rotation autour du centre
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((angle * Math.PI) / 180);
+    ctx.drawImage(srcCanvas, -sw / 2, -sh / 2, sw, sh);
+
+    return canvas.toDataURL("image/jpeg", quality).split(",")[1];
+  });
+}
+
 export async function imageDataToBlob(imageData: ImageData): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = imageData.width;

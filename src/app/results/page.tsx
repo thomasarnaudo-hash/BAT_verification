@@ -8,7 +8,7 @@ import {
   SpellCheckResult,
   SignatureResult,
 } from "@/types";
-import { renderPdf, imageDataToDataUrl } from "@/lib/pdf-utils";
+import { renderPdf, imageDataToDataUrl, createRotatedVersions } from "@/lib/pdf-utils";
 import { comparePages } from "@/lib/pixel-compare";
 import { compareText } from "@/lib/text-diff";
 import PixelDiffViewer from "@/components/PixelDiffViewer";
@@ -31,6 +31,7 @@ export default function ResultsPage() {
   const [spellCheck, setSpellCheck] = useState<SpellCheckResult | null>(null);
   const [signatureResult, setSignatureResult] = useState<SignatureResult | null>(null);
   const [overallScore, setOverallScore] = useState<number>(0);
+  const [ocrEmpty, setOcrEmpty] = useState(false);
   const [sku, setSku] = useState("");
   const [referenceBlobUrl, setReferenceBlobUrl] = useState("");
   const [newBlobUrl, setNewBlobUrl] = useState("");
@@ -71,29 +72,41 @@ export default function ResultsPage() {
         const pixResult = comparePages(refPages, newPages);
         setPixelDiff(pixResult);
 
-        // 3. OCR via Gemini Vision — le serveur télécharge les PDFs directement
-        setProgress("Extraction du texte par OCR (Gemini)...");
+        // 3. OCR via Gemini Vision — multi-rotation pour capturer le texte latéral
+        setProgress("Extraction du texte par OCR (multi-rotation)...");
 
-        const ocrFromUrl = async (pdfUrl: string): Promise<string> => {
-          const res = await fetch("/api/ocr", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pdfUrl }),
-          });
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            console.error("OCR failed:", errData);
-            return "";
+        const ocrMultiRotation = async (pages: typeof refPages): Promise<string> => {
+          // Créer les 4 rotations de chaque page, puis envoyer à l'API
+          const allTexts: string[] = [];
+          for (const page of pages) {
+            setProgress(`OCR multi-rotation : page ${page.pageNumber}...`);
+            const rotatedImages = createRotatedVersions(page.imageData);
+            const res = await fetch("/api/ocr", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ images: rotatedImages }),
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              console.error("OCR multi-rotation failed:", errData);
+              allTexts.push("");
+              continue;
+            }
+            const resData = await res.json();
+            allTexts.push(resData.text || "");
           }
-          const resData = await res.json();
-          return resData.text || "";
+          return allTexts.join("\n\n");
         };
 
         // OCR les 2 PDFs séquentiellement (évite le rate limit Gemini)
-        setProgress("OCR de la référence...");
-        const refOcrText = await ocrFromUrl(data.referenceBlobUrl);
-        setProgress("OCR du nouveau BAT...");
-        const newOcrText = await ocrFromUrl(data.tempBlobUrl);
+        setProgress("OCR de la référence (multi-rotation)...");
+        const refOcrText = await ocrMultiRotation(refPages);
+        setProgress("OCR du nouveau BAT (multi-rotation)...");
+        const newOcrText = await ocrMultiRotation(newPages);
+
+        if (!refOcrText.trim()) console.warn("OCR référence : aucun texte extrait");
+        if (!newOcrText.trim()) console.warn("OCR nouveau BAT : aucun texte extrait");
+        if (!refOcrText.trim() && !newOcrText.trim()) setOcrEmpty(true);
 
         const refOcrTexts = [refOcrText];
         const newOcrTexts = [newOcrText];
@@ -235,7 +248,7 @@ export default function ResultsPage() {
 
       <div className="mb-8">
         {activeTab === "visual" && pixelDiff && <PixelDiffViewer result={pixelDiff} />}
-        {activeTab === "text" && textDiff && <TextDiffViewer result={textDiff} />}
+        {activeTab === "text" && textDiff && <TextDiffViewer result={textDiff} ocrEmpty={ocrEmpty} />}
         {activeTab === "spelling" && spellCheck && <SpellCheckReport result={spellCheck} />}
         {activeTab === "signature" && signatureResult && <SignatureStatusComponent result={signatureResult} />}
       </div>
