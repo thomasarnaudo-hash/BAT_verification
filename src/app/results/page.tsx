@@ -72,44 +72,67 @@ export default function ResultsPage() {
         const pixResult = comparePages(refPages, newPages);
         setPixelDiff(pixResult);
 
-        // 3. OCR via Gemini Vision — multi-rotation pour capturer le texte latéral
-        setProgress("Extraction du texte par OCR (multi-rotation)...");
+        // 3. Extraction de texte — priorité au texte intégré dans le PDF
+        // Les PDFs de packaging (Illustrator/InDesign) contiennent du vrai texte numérique.
+        // On l'utilise directement : c'est plus rapide, gratuit et 100% fiable.
+        // L'OCR Gemini n'est utilisé qu'en dernier recours (PDFs scannés/images).
+        setProgress("Extraction du texte...");
 
-        const ocrMultiRotation = async (pages: typeof refPages): Promise<string> => {
-          // Créer les 4 rotations de chaque page, puis envoyer à l'API
-          const allTexts: string[] = [];
-          for (const page of pages) {
-            setProgress(`OCR multi-rotation : page ${page.pageNumber}...`);
-            const rotatedImages = createRotatedVersions(page.imageData);
-            const res = await fetch("/api/ocr", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ images: rotatedImages }),
-            });
-            if (!res.ok) {
-              const errData = await res.json().catch(() => ({}));
-              console.error("OCR multi-rotation failed:", errData);
-              allTexts.push("");
-              continue;
+        const MIN_TEXT_LENGTH = 50; // seuil pour considérer que le PDF contient du vrai texte
+        const refPdfText = refPages.map((p) => p.text).join("\n\n").trim();
+        const newPdfText = newPages.map((p) => p.text).join("\n\n").trim();
+
+        let refFinalText = refPdfText;
+        let newFinalText = newPdfText;
+
+        const refHasText = refPdfText.length >= MIN_TEXT_LENGTH;
+        const newHasText = newPdfText.length >= MIN_TEXT_LENGTH;
+
+        if (refHasText && newHasText) {
+          // Les 2 PDFs ont du texte intégré → on l'utilise directement (pas d'OCR)
+          console.log(`Texte PDF intégré utilisé (ref: ${refPdfText.length} chars, new: ${newPdfText.length} chars)`);
+        } else {
+          // Fallback OCR pour les PDFs sans texte intégré (scans, images)
+          setProgress("OCR par IA (PDF sans texte intégré)...");
+
+          const ocrMultiRotation = async (pages: typeof refPages): Promise<string> => {
+            const allTexts: string[] = [];
+            for (const page of pages) {
+              setProgress(`OCR multi-rotation : page ${page.pageNumber}...`);
+              const rotatedImages = createRotatedVersions(page.imageData);
+              const res = await fetch("/api/ocr", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ images: rotatedImages }),
+              });
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                console.error("OCR multi-rotation failed:", errData);
+                allTexts.push("");
+                continue;
+              }
+              const resData = await res.json();
+              allTexts.push(resData.text || "");
             }
-            const resData = await res.json();
-            allTexts.push(resData.text || "");
+            return allTexts.join("\n\n");
+          };
+
+          if (!refHasText) {
+            setProgress("OCR de la référence (multi-rotation)...");
+            refFinalText = await ocrMultiRotation(refPages);
           }
-          return allTexts.join("\n\n");
-        };
+          if (!newHasText) {
+            setProgress("OCR du nouveau BAT (multi-rotation)...");
+            newFinalText = await ocrMultiRotation(newPages);
+          }
+        }
 
-        // OCR les 2 PDFs séquentiellement (évite le rate limit Gemini)
-        setProgress("OCR de la référence (multi-rotation)...");
-        const refOcrText = await ocrMultiRotation(refPages);
-        setProgress("OCR du nouveau BAT (multi-rotation)...");
-        const newOcrText = await ocrMultiRotation(newPages);
+        if (!refFinalText.trim()) console.warn("Référence : aucun texte extrait");
+        if (!newFinalText.trim()) console.warn("Nouveau BAT : aucun texte extrait");
+        if (!refFinalText.trim() && !newFinalText.trim()) setOcrEmpty(true);
 
-        if (!refOcrText.trim()) console.warn("OCR référence : aucun texte extrait");
-        if (!newOcrText.trim()) console.warn("OCR nouveau BAT : aucun texte extrait");
-        if (!refOcrText.trim() && !newOcrText.trim()) setOcrEmpty(true);
-
-        const refOcrTexts = [refOcrText];
-        const newOcrTexts = [newOcrText];
+        const refOcrTexts = [refFinalText];
+        const newOcrTexts = [newFinalText];
 
         // 4. Text comparison (sur le texte OCR)
         setProgress("Comparaison textuelle...");
