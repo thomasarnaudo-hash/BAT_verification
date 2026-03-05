@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { upload } from "@vercel/blob/client";
 import { Reference } from "@/types";
 import { parseFilename } from "@/lib/metadata";
 import ReferenceCard from "@/components/ReferenceCard";
@@ -57,16 +58,23 @@ export default function Dashboard() {
     setUploading(true);
     setError("");
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
+      // 1. Upload le PDF directement vers Blob (contourne la limite 4.5 MB de Vercel)
+      const blob = await upload(selectedFile.name, selectedFile, {
+        access: "public",
+        handleUploadUrl: "/api/blob-upload",
+      });
 
+      // 2. Envoie seulement les métadonnées + URL du blob (petit payload)
       const sku = formSku.trim() || crypto.randomUUID().slice(0, 8).toUpperCase();
-      formData.append("sku", sku);
-      formData.append("productName", formName.trim());
-
       const res = await fetch("/api/references", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sku,
+          productName: formName.trim(),
+          blobUrl: blob.url,
+          filename: selectedFile.name,
+        }),
       });
       if (res.ok) {
         setShowAdd(false);
@@ -129,6 +137,7 @@ export default function Dashboard() {
           </h2>
           <p className="text-sm text-slate-500 mb-4">
             Le SKU, nom du produit et langues seront extraits automatiquement du nom de fichier.
+            <span className="text-slate-400"> PDF jusqu&apos;à 100 Mo acceptés.</span>
           </p>
           <FileUpload
             onFileSelected={handleFileSelected}

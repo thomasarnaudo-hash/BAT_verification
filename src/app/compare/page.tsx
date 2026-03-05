@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { Reference } from "@/types";
 import { renderPdf, PdfPage } from "@/lib/pdf-utils";
 import FileUpload from "@/components/FileUpload";
@@ -79,17 +80,12 @@ function CompareContent() {
     setError("");
 
     try {
-      // Upload temp file to get a URL
-      const formData = new FormData();
-      formData.append("file", newFile);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!uploadRes.ok) {
-        const data = await uploadRes.json().catch(() => ({}));
-        setError(data.error || "Erreur lors de l'upload.");
-        setComparing(false);
-        return;
-      }
-      const uploaded = await uploadRes.json();
+      // Upload direct vers Blob (contourne la limite 4.5 MB serverless)
+      const blob = await upload(newFile.name, newFile, {
+        access: "public",
+        handleUploadUrl: "/api/blob-upload",
+      });
+      const uploaded = { blobUrl: blob.url, id: crypto.randomUUID() };
 
       // Store only URLs and SKU in sessionStorage (lightweight!)
       const comparisonData = {

@@ -21,25 +21,27 @@ export async function GET() {
   }
 }
 
-// POST /api/references — add a new reference with its PDF
+// POST /api/references — add a new reference
+// Accepts JSON body with { sku, productName, blobUrl, filename }
+// The PDF is uploaded client-side directly to Vercel Blob via /api/blob-upload
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const sku = formData.get("sku") as string | null;
-    const productName = formData.get("productName") as string | null;
+    const body = await request.json();
+    const { sku, productName, blobUrl, filename } = body;
 
-    if (!file || !sku) {
+    if (!sku || !blobUrl) {
       return NextResponse.json(
-        { error: "file and sku are required" },
+        { error: "sku and blobUrl are required" },
         { status: 400 }
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const blobUrl = await uploadReferencePdf(sku, buffer, file.name);
+    // Copy the client-uploaded blob to the canonical path references/<sku>/current.pdf
+    const res = await fetch(blobUrl);
+    const data = await res.arrayBuffer();
+    const finalUrl = await uploadReferencePdf(sku, Buffer.from(data), filename || "current.pdf");
 
-    const parsed = parseFilename(file.name);
+    const parsed = parseFilename(filename || "");
 
     const ref: Reference = {
       sku,
@@ -48,9 +50,9 @@ export async function POST(request: NextRequest) {
       languages: parsed?.languages || [],
       currentVersion: 1,
       lastValidatedAt: new Date().toISOString(),
-      validatedBy: (formData.get("validatedBy") as string) || "Import initial",
+      validatedBy: body.validatedBy || "Import initial",
       signatureStatus: "unknown",
-      blobUrl,
+      blobUrl: finalUrl,
     };
 
     await addReference(ref);
